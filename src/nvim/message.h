@@ -10,6 +10,7 @@
 #include "nvim/grid_defs.h"
 #include "nvim/macros.h"
 #include "nvim/types.h"
+#include "nvim/garray.h"
 
 // Types of dialogs passed to do_dialog().
 #define VIM_GENERIC     0
@@ -71,4 +72,19 @@ EXTERN int msg_grid_scroll_discount INIT(= 0);
 #ifdef INCLUDE_GENERATED_DECLARATIONS
 # include "message.h.generated.h"
 #endif
+
+// Extended msg state, currently used for external UIs with ext_messages
+typedef struct {
+  const char *kind;
+  Array chunks;
+  garray_T last_chunk;
+  sattr_T last_attr;
+  size_t cur_len;
+  bool overwrite; ///< will overwrite last message
+  int visible; ///< number of messages currently visible
+  bool history_visible;
+  /// Shouldn't clear message after leaving cmdline
+  bool keep_after_cmdline;
+} MsgExtState;
+
 #endif  // NVIM_MESSAGE_H

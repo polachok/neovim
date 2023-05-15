@@ -123,21 +123,30 @@ bool keep_msg_more = false;    // keep_msg was set by msgmore()
 //                  This is an allocated string or NULL when not used.
 
 // Extended msg state, currently used for external UIs with ext_messages
-static const char *msg_ext_kind = NULL;
-static Array msg_ext_chunks = ARRAY_DICT_INIT;
-static garray_T msg_ext_last_chunk = GA_INIT(sizeof(char), 40);
-static sattr_T msg_ext_last_attr = -1;
-static size_t msg_ext_cur_len = 0;
-
-static bool msg_ext_overwrite = false;  ///< will overwrite last message
-static int msg_ext_visible = 0;  ///< number of messages currently visible
-
-static bool msg_ext_history_visible = false;
-
-/// Shouldn't clear message after leaving cmdline
-static bool msg_ext_keep_after_cmdline = false;
+static MsgExtState msg_ext_state = {
+  .kind = NULL,
+  .chunks = ARRAY_DICT_INIT,
+  .last_chunk = GA_INIT(sizeof(char), 40),
+  .last_attr = -1,
+  .cur_len = 0,
+  .overwrite = false,
+  .visible = 0,
+  .history_visible = false,
+  .keep_after_cmdline = false,
+};
 
 static int msg_grid_pos_at_flush = 0;
+
+static void msg_ext_state_init(MsgExtState *state) {
+  state->kind = NULL;
+  state->chunks = (Array)ARRAY_DICT_INIT;
+  state->last_chunk = (garray_T)GA_INIT(sizeof(char), 40);
+  state->last_attr = -1;
+  state->cur_len = 0;
+  state->overwrite = 0;
+  state->history_visible = false;
+  state->keep_after_cmdline = false;
+}
 
 static void ui_ext_msg_set_pos(int row, bool scrolled)
 {
@@ -745,7 +754,7 @@ static bool emsg_multiline(const char *s, bool multiline)
   }                           // wait_return() has reset need_wait_return
                               // and a redraw is expected because
                               // msg_scrolled is non-zero
-  if (msg_ext_kind == NULL) {
+  if (msg_ext_state.kind == NULL) {
     msg_ext_set_kind("emsg");
   }
 
@@ -990,7 +999,7 @@ static void add_msg_hist_multiattr(const char *s, int len, int attr, bool multil
   p->attr = attr;
   p->multiline = multiline;
   p->multiattr = multiattr;
-  p->kind = msg_ext_kind;
+  p->kind = msg_ext_state.kind;
   if (last_msg_hist != NULL) {
     last_msg_hist->next = p;
   }
@@ -1091,7 +1100,7 @@ void ex_messages(void *const eap_p)
     }
     ui_call_msg_history_show(entries);
     api_free_array(entries);
-    msg_ext_history_visible = true;
+    msg_ext_state.history_visible = true;
     wait_return(false);
   } else {
     msg_hist_off = true;
@@ -1272,7 +1281,7 @@ void wait_return(int redraw)
     }
     skip_redraw = true;  // skip redraw once
     do_redraw = false;
-    msg_ext_keep_after_cmdline = true;
+    msg_ext_state.keep_after_cmdline = true;
   }
 
   // If the screen size changed screen_resize() will redraw the screen.
@@ -1396,7 +1405,7 @@ void msg_ext_set_kind(const char *msg_kind)
   // TODO(bfredl): would be nice to avoid dynamic scoping, but that would
   // need refactoring the msg_ interface to not be "please pretend nvim is
   // a terminal for a moment"
-  msg_ext_kind = msg_kind;
+  msg_ext_state.kind = msg_kind;
 }
 
 /// Prepare for outputting characters in the command line.
@@ -1441,9 +1450,9 @@ void msg_start(void)
 
   if (ui_has(kUIMessages)) {
     msg_ext_ui_flush();
-    if (!msg_scroll && msg_ext_visible) {
+    if (!msg_scroll && msg_ext_state.visible) {
       // Will overwrite last message.
-      msg_ext_overwrite = true;
+      msg_ext_state.overwrite = true;
     }
   }
 
@@ -2066,7 +2075,7 @@ void msg_puts_attr_len(const char *const str, const ptrdiff_t len, int attr)
   // Not needed when only using CR to move the cursor.
   bool overflow = false;
   if (ui_has(kUIMessages)) {
-    int count = msg_ext_visible + (msg_ext_overwrite ? 0 : 1);
+    int count = msg_ext_state.visible + (msg_ext_state.overwrite ? 0 : 1);
     // TODO(bfredl): possible extension point, let external UI control this
     if (count > 1) {
       overflow = true;
@@ -2123,15 +2132,15 @@ void msg_printf_attr(const int attr, const char *const fmt, ...)
 static void msg_ext_emit_chunk(void)
 {
   // Color was changed or a message flushed, end current chunk.
-  if (msg_ext_last_attr == -1) {
+  if (msg_ext_state.last_attr == -1) {
     return;  // no chunk
   }
   Array chunk = ARRAY_DICT_INIT;
-  ADD(chunk, INTEGER_OBJ(msg_ext_last_attr));
-  msg_ext_last_attr = -1;
-  String text = ga_take_string(&msg_ext_last_chunk);
+  ADD(chunk, INTEGER_OBJ(msg_ext_state.last_attr));
+  msg_ext_state.last_attr = -1;
+  String text = ga_take_string(&msg_ext_state.last_chunk);
   ADD(chunk, STRING_OBJ(text));
-  ADD(msg_ext_chunks, ARRAY_OBJ(chunk));
+  ADD(msg_ext_state.chunks, ARRAY_OBJ(chunk));
 }
 
 /// The display part of msg_puts_attr_len().
@@ -2151,14 +2160,14 @@ static void msg_puts_display(const char *str, int maxlen, int attr, int recurse)
   did_wait_return = false;
 
   if (ui_has(kUIMessages)) {
-    if (attr != msg_ext_last_attr) {
+    if (attr != msg_ext_state.last_attr) {
       msg_ext_emit_chunk();
-      msg_ext_last_attr = attr;
+      msg_ext_state.last_attr = attr;
     }
     // Concat pieces with the same highlight
     size_t len = strnlen(str, (size_t)maxlen);  // -V781
-    ga_concat_len(&msg_ext_last_chunk, str, len);
-    msg_ext_cur_len += len;
+    ga_concat_len(&msg_ext_state.last_chunk, str, len);
+    msg_ext_state.cur_len += len;
     return;
   }
 
@@ -3171,22 +3180,22 @@ int msg_end(void)
 void msg_ext_ui_flush(void)
 {
   if (!ui_has(kUIMessages)) {
-    msg_ext_kind = NULL;
+    msg_ext_state.kind = NULL;
     return;
   }
 
   msg_ext_emit_chunk();
-  if (msg_ext_chunks.size > 0) {
-    ui_call_msg_show(cstr_as_string((char *)msg_ext_kind),
-                     msg_ext_chunks, msg_ext_overwrite);
-    if (!msg_ext_overwrite) {
-      msg_ext_visible++;
+  if (msg_ext_state.chunks.size > 0) {
+    ui_call_msg_show(cstr_as_string((char *)msg_ext_state.kind),
+                     msg_ext_state.chunks, msg_ext_state.overwrite);
+    if (!msg_ext_state.overwrite) {
+      msg_ext_state.visible++;
     }
-    msg_ext_kind = NULL;
-    api_free_array(msg_ext_chunks);
-    msg_ext_chunks = (Array)ARRAY_DICT_INIT;
-    msg_ext_cur_len = 0;
-    msg_ext_overwrite = false;
+    msg_ext_state.kind = NULL;
+    api_free_array(msg_ext_state.chunks);
+    msg_ext_state.chunks = (Array)ARRAY_DICT_INIT;
+    msg_ext_state.cur_len = 0;
+    msg_ext_state.overwrite = false;
   }
 }
 
@@ -3196,27 +3205,27 @@ void msg_ext_flush_showmode(void)
   // separate event. Still reuse the same chunking logic, for simplicity.
   if (ui_has(kUIMessages)) {
     msg_ext_emit_chunk();
-    ui_call_msg_showmode(msg_ext_chunks);
-    api_free_array(msg_ext_chunks);
-    msg_ext_chunks = (Array)ARRAY_DICT_INIT;
-    msg_ext_cur_len = 0;
+    ui_call_msg_showmode(msg_ext_state.chunks);
+    api_free_array(msg_ext_state.chunks);
+    msg_ext_state.chunks = (Array)ARRAY_DICT_INIT;
+    msg_ext_state.cur_len = 0;
   }
 }
 
 void msg_ext_clear(bool force)
 {
-  if (msg_ext_visible && (!msg_ext_keep_after_cmdline || force)) {
+  if (msg_ext_state.visible && (!msg_ext_state.keep_after_cmdline || force)) {
     ui_call_msg_clear();
-    msg_ext_visible = 0;
-    msg_ext_overwrite = false;  // nothing to overwrite
+    msg_ext_state.visible = 0;
+    msg_ext_state.overwrite = false;  // nothing to overwrite
   }
-  if (msg_ext_history_visible) {
+  if (msg_ext_state.history_visible) {
     ui_call_msg_history_clear();
-    msg_ext_history_visible = false;
+    msg_ext_state.history_visible = false;
   }
 
   // Only keep once.
-  msg_ext_keep_after_cmdline = false;
+  msg_ext_state.keep_after_cmdline = false;
 }
 
 void msg_ext_clear_later(void)
@@ -3240,7 +3249,7 @@ void msg_ext_check_clear(void)
 
 bool msg_ext_is_visible(void)
 {
-  return ui_has(kUIMessages) && msg_ext_visible > 0;
+  return ui_has(kUIMessages) && msg_ext_state.visible > 0;
 }
 
 /// If the written message runs into the shown command or ruler, we have to
@@ -3435,7 +3444,7 @@ void give_warning(const char *message, bool hl)
     keep_msg_attr = 0;
   }
 
-  if (msg_ext_kind == NULL) {
+  if (msg_ext_state.kind == NULL) {
     msg_ext_set_kind("wmsg");
   }
 
@@ -3465,7 +3474,7 @@ void msg_advance(int col)
   if (ui_has(kUIMessages)) {
     // TODO(bfredl): use byte count as a basic proxy.
     // later on we might add proper support for formatted messages.
-    while (msg_ext_cur_len < (size_t)col) {
+    while (msg_ext_state.cur_len < (size_t)col) {
       msg_putchar(' ');
     }
     return;
