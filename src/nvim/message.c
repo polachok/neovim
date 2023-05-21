@@ -3174,9 +3174,10 @@ void msg_ext_ui_flush(void)
 
   msg_ext_emit_chunk();
   if (msg_ext_state.chunks.size > 0) {
+    MsgExtState orig = msg_ext_state;
     WITH_TEMP_EXT_STATE(
-      ui_call_msg_show(cstr_as_string((char *)msg_ext_state.kind),
-                       msg_ext_state.chunks, msg_ext_state.overwrite);
+      ui_call_msg_show(cstr_as_string((char *)orig.kind),
+                       orig.chunks, orig.overwrite);
     );
     if (!msg_ext_state.overwrite) {
       msg_ext_state.visible++;
@@ -3195,8 +3196,9 @@ void msg_ext_flush_showmode(void)
   // separate event. Still reuse the same chunking logic, for simplicity.
   if (ui_has(kUIMessages)) {
     msg_ext_emit_chunk();
+    Array chunks = msg_ext_state.chunks;
     WITH_TEMP_EXT_STATE(
-      ui_call_msg_showmode(msg_ext_state.chunks);
+      ui_call_msg_showmode(chunks);
     );
     api_free_array(msg_ext_state.chunks);
     msg_ext_state.chunks = (Array)ARRAY_DICT_INIT;

@@ -660,8 +660,16 @@ void ui_call_event(char *name, Array args)
 {
   UIEventCallback *event_cb;
   bool handled = false;
+
+  Array orig_call_buf = call_buf;
+  Array empty_call_buf = (Array)ARRAY_DICT_INIT;
+
   map_foreach_value(&ui_event_cbs, event_cb, {
     Error err = ERROR_INIT;
+
+    call_buf = copy_array(empty_call_buf, NULL);
+    kv_ensure_space(call_buf, 16);
+
     Object res = nlua_call_ref(event_cb->cb, name, args, false, &err);
     if (res.type == kObjectTypeBoolean && res.data.boolean == true) {
       handled = true;
@@ -670,8 +678,10 @@ void ui_call_event(char *name, Array args)
       ELOG("Error while executing ui_comp_event callback: %s", err.msg);
     }
     api_clear_error(&err);
+    api_free_array(call_buf);
   })
 
+  call_buf = orig_call_buf;
   if (!handled) {
     UI_CALL(true, event, ui, name, args);
   }
