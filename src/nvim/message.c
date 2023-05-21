@@ -122,31 +122,19 @@ bool keep_msg_more = false;    // keep_msg was set by msgmore()
 //                  main_loop().
 //                  This is an allocated string or NULL when not used.
 
+#define WITH_TEMP_EXT_STATE(code) \
+  do { \
+    MsgExtState old_state = msg_ext_state; \
+    msg_ext_state = (MsgExtState)MSG_EXT_STATE_INIT; \
+    code; \
+    api_free_array(msg_ext_state.chunks); \
+    ga_clear(&msg_ext_state.last_chunk); \
+    msg_ext_state = old_state; \
+  } while (0)
+
 // Extended msg state, currently used for external UIs with ext_messages
-static MsgExtState msg_ext_state = {
-  .kind = NULL,
-  .chunks = ARRAY_DICT_INIT,
-  .last_chunk = GA_INIT(sizeof(char), 40),
-  .last_attr = -1,
-  .cur_len = 0,
-  .overwrite = false,
-  .visible = 0,
-  .history_visible = false,
-  .keep_after_cmdline = false,
-};
-
+static MsgExtState msg_ext_state = MSG_EXT_STATE_INIT;
 static int msg_grid_pos_at_flush = 0;
-
-static void msg_ext_state_init(MsgExtState *state) {
-  state->kind = NULL;
-  state->chunks = (Array)ARRAY_DICT_INIT;
-  state->last_chunk = (garray_T)GA_INIT(sizeof(char), 40);
-  state->last_attr = -1;
-  state->cur_len = 0;
-  state->overwrite = 0;
-  state->history_visible = false;
-  state->keep_after_cmdline = false;
-}
 
 static void ui_ext_msg_set_pos(int row, bool scrolled)
 {
@@ -3186,8 +3174,10 @@ void msg_ext_ui_flush(void)
 
   msg_ext_emit_chunk();
   if (msg_ext_state.chunks.size > 0) {
-    ui_call_msg_show(cstr_as_string((char *)msg_ext_state.kind),
-                     msg_ext_state.chunks, msg_ext_state.overwrite);
+    WITH_TEMP_EXT_STATE(
+      ui_call_msg_show(cstr_as_string((char *)msg_ext_state.kind),
+                       msg_ext_state.chunks, msg_ext_state.overwrite);
+    );
     if (!msg_ext_state.overwrite) {
       msg_ext_state.visible++;
     }
@@ -3205,7 +3195,9 @@ void msg_ext_flush_showmode(void)
   // separate event. Still reuse the same chunking logic, for simplicity.
   if (ui_has(kUIMessages)) {
     msg_ext_emit_chunk();
-    ui_call_msg_showmode(msg_ext_state.chunks);
+    WITH_TEMP_EXT_STATE(
+      ui_call_msg_showmode(msg_ext_state.chunks);
+    );
     api_free_array(msg_ext_state.chunks);
     msg_ext_state.chunks = (Array)ARRAY_DICT_INIT;
     msg_ext_state.cur_len = 0;

@@ -87,4 +87,16 @@ typedef struct {
   bool keep_after_cmdline;
 } MsgExtState;
 
+#define MSG_EXT_STATE_INIT { \
+  .kind = NULL, \
+  .chunks = ARRAY_DICT_INIT, \
+  .last_chunk = GA_INIT(sizeof(char), 40), \
+  .last_attr = -1, \
+  .cur_len = 0, \
+  .overwrite = false, \
+  .visible = 0, \
+  .history_visible = false, \
+  .keep_after_cmdline = false, \
+}
+
 #endif  // NVIM_MESSAGE_H
